@@ -1,0 +1,6 @@
+Pat: Horse, cow, sheep, pig (2 seconds) goat, lion, tiger, elephant,
+leopard (1 second) buffalo, zebra, wildebeest (1 second) dog, cat, rat,
+mouse, guinea pig, hamster (3 seconds) crocodile, alligator, kangaroo,
+koala bear, dingo (1 second) wolf (5 seconds) oh hang on. Badger, fox,
+hare, rabbit, hedgehog (1 second) stoat, weasel, dormouse, field mouse
+(3 seconds) er birds, crows, pigeons.

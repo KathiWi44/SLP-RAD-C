@@ -1,0 +1,4 @@
+Pat: Cat, dog, monkey (1 second) cheetah, giraffe (2 seconds) um (sighs)
+(2 seconds) horse, donkey (4 seconds) (sighs) dolphin, fish (9 seconds)
+cow (1 second) horse (2 seconds) pig (3 seconds) (sighs) (3 seconds)
+puppy (1 second) kitten (11 seconds) (tuts) snail.

@@ -1,0 +1,4 @@
+Pat: Cat, dog (1 second) giraffe, elephant (1 second) cow, sheep (2
+seconds) goat (1 second) pig (6 seconds) monkey (1 second) guinea pig (1
+second) hamster (3 seconds) rabbit (4 seconds) chinchilla (2 seconds)
+rhinoceros, polar bear (12 seconds) donkey. (2 seconds)

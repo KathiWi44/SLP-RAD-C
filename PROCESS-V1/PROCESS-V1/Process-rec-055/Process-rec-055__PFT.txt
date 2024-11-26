@@ -1,0 +1,5 @@
+Pat: Person, penguin, um (1 second) puffin (1 second) people (6 seconds)
+um (1 second) pencil, pen (2 seconds) picture (1 second) photo (3
+seconds) photograph (2 seconds) um (1 second) paper (2 seconds) pendulum
+(1 second) um paragraph (2 seconds) um (sighs) (5 seconds) python (5
+seconds) um.

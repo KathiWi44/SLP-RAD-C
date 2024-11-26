@@ -1,0 +1,6 @@
+Pat: Aardvark, bear, cat, dog (1 second) elephant, fox, goat, horse (1
+second) ibex, jackal (2 seconds) lion, monkey (4 seconds) opossum (1
+second) puma (8 seconds) tiger, unicorn (3 seconds) vole, wolf (1
+second) zebra (1 second) ass (2 seconds) camel (2 seconds) dingo (6
+seconds) (sighs) (1 second) iguana (1 second) butterfly, moth, bat (1
+second) lynx.

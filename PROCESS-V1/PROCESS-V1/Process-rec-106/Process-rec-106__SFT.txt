@@ -1,0 +1,4 @@
+Pat: Sheep, goats (3 seconds) calves, bulls (3 seconds) pigs (1 second)
+ducks (2 seconds) hens, bantams (3 seconds) mules, horses (2 seconds)
+alpacas (3 seconds) bison (1 second) wolves, coyote, lions, elephants,
+wildebeest (1 second) alligators, crocodiles, wallabies, kangaroos.

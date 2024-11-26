@@ -1,0 +1,5 @@
+Pat: Dog, cat, mouse, rabbit, rat, giraffe, zebra, wolf, tiger, leopard,
+cheetah, horse, donkey, chicken (1 second) um elephant (2 seconds) fox,
+hedgehog (2 seconds) um (1 second) pig, donkey, um (3 seconds) (tuts)
+shrew, vole, mouse (1 second) hare, deer (1 second) jackal, hyena (1
+second) gerbil, hamster, guinea pig, pony (3 seconds) piglets.

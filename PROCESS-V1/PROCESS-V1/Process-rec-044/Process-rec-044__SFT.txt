@@ -1,0 +1,4 @@
+Pat: Antelope (5 seconds) bear, cat (1 second) koala bear (1 second) dog
+(1 second) elephant (5 seconds) gorilla, giant panda, horse (4 seconds)
+kangaroo (1 second) lemur (5 seconds) pig (6 seconds) tiger (3 seconds)
+vixen (13 seconds) rabbit.

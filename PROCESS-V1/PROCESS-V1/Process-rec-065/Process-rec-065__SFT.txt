@@ -1,0 +1,4 @@
+Pat: Cat, dog (1 second) goldfish (1 second) rat, elephant, tiger, lion,
+cheetah, snake, crocodile (1 second) wildebeest, giraffe, hippopotamus,
+cow, pig (1 second) hen. (31 seconds) Gone blank, can’t think of
+anymore.

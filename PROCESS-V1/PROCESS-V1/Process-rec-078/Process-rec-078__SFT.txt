@@ -1,0 +1,5 @@
+Pat: Cat, dog, serval, lion, tiger, cheetah, panther (1 second) um
+giraffe (1 second) rhinoceros, elephant (1 second) er (1 second)
+hedgehog (1 second) whale (2 seconds) shark (2 seconds) tuna (1 second)
+salmon (11 seconds) monkey (7 seconds) iguana (4 seconds) kangaroo (1
+second) camel.

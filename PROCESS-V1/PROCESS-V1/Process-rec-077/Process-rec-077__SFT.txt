@@ -1,0 +1,5 @@
+Pat: Cat, dog (1 second) lion (1 second) giraffe, alligator, snake (1
+second) frog (3 seconds) hippopotamus, gorilla (4 seconds) er birds (1
+second) squirrel, rabbit (1 second) deer (1 second) buffalo, antelope (4
+seconds) zebra (7 seconds) mouse (6 seconds) raccoon (6 seconds) that’s
+it.

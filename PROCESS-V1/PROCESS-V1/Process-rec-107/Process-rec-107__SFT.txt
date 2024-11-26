@@ -1,0 +1,3 @@
+Pat: Cat, dog (5 seconds) horse, cow, sheep (1 second) monkey (3
+seconds) kangaroo (5 seconds) giraffe (3 seconds) lion, tiger (8
+seconds) a monkey (8 seconds) a rabbit (3 seconds) birds.

@@ -1,0 +1,4 @@
+Pat: Zebra (1 second) camel, cat, dog, mouse (4 seconds) er rhinoceros,
+cheetah, panther, lion, tiger, chimpanzee, gorilla, orangutan, baboon.
+(4 seconds) Hyena, coyote, wolf (6 seconds) er pig, er cow, er sheep (10
+seconds) er deer, er moose. (14 seconds)

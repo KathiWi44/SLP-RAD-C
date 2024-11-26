@@ -1,0 +1,6 @@
+Pat: (2 seconds) Cat, dog, hamster, guinea pig, rabbit, weasel, stoat,
+fox, badger, lion, tiger, elephant, lynx, meerkat (3 seconds) mouse,
+rat, ferret, polecat (5 seconds) stag, deer (1 second) pig, cow, donkey,
+horse, sheep (3 seconds) goat, llama, alpaca (5 seconds) giraffe, zebra,
+hippopotamus, rhino, panda (3 seconds) monkey, chimpanzee (1 second)
+gorilla, orangutan.

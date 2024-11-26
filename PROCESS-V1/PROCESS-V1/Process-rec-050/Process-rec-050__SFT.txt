@@ -1,0 +1,3 @@
+Pat: (7 seconds) Cat, dog (4 seconds) chicken, lamb (11 seconds)
+buffalo, cow (11 seconds) gorilla, chimpanzee, monkey (1 second) snake
+(12 seconds) wallaby, garoo, ka, ka (?).
