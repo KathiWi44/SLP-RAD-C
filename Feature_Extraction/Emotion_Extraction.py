@@ -2,210 +2,168 @@ import os
 import librosa
 import pandas as pd
 import torch
-import matplotlib.pyplot as plt
 from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2Model
 from sklearn.svm import SVR
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import Pipeline
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 import numpy as np
-import logging
-from sklearn.model_selection import GridSearchCV
+import joblib
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Hugging Face model and feature extractor
 MODEL_NAME = "CAiRE/SER-wav2vec2-large-xlsr-53-eng-zho-all-age"
-feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(MODEL_NAME)
-wav2vec_model = Wav2Vec2Model.from_pretrained(MODEL_NAME)
+processor =  Wav2Vec2FeatureExtractor.from_pretrained(MODEL_NAME)
+model = Wav2Vec2Model.from_pretrained(MODEL_NAME, output_hidden_states=True)
 
-# Paths to dataset and output
+cache_dir = os.path.expanduser("~/.cache/huggingface/transformers")
+if os.path.exists(cache_dir):
+    print("Clearing Hugging Face cache...")
+    for file in os.listdir(cache_dir):
+        file_path = os.path.join(cache_dir, file)
+        try:
+            if os.path.isdir(file_path):
+                os.rmdir(file_path)  # Remove directories recursively
+            else:
+                os.remove(file_path)  # Remove files
+        except Exception as e:
+            print(f"Error clearing cache: {e}")
+
+SCRIPT_DIR = os.path.dirname(__file__)
 DATASET_PATH = os.path.join(SCRIPT_DIR, "../PROCESS-V1/PROCESS-V1")
 OUTPUT_PATH = os.path.join(SCRIPT_DIR, "../Feature_Extraction")
+FEATURES_FILE = os.path.join(OUTPUT_PATH, "high_level_features.csv")
 CSV_FILE = os.path.join(DATASET_PATH, "dem-info.csv")
-FEATURES_FILE = os.path.join(OUTPUT_PATH, "extracted_features.csv")
 
 os.makedirs(OUTPUT_PATH, exist_ok=True)
 
+print("Loading participant metadata from CSV...")
 participant_data = pd.read_csv(CSV_FILE)
+print(f"Loaded {len(participant_data)} participant records from {CSV_FILE}.")
 
-# Extract emotion features from multiple layers
-def extract_multi_layer_features(audio_file):
-    audio, rate = librosa.load(audio_file, sr=16000)
-    inputs = feature_extractor(audio, sampling_rate=rate, return_tensors="pt", padding=True)
-    with torch.no_grad():
-        outputs = wav2vec_model(**inputs, output_hidden_states=True)
-    hidden_states = outputs.hidden_states
-    layer_indices = [0, 6, 12]  # Example layers: low, mid, high
-    aggregated_features = torch.cat([hidden_states[i].mean(dim=1) for i in layer_indices], dim=-1)
-    return aggregated_features.squeeze().tolist()
+# Function to extract features from high-level layers of Wav2Vec2
+def extract_high_level_features(audio_file):
+    try:
+        # Load audio file
+        audio, rate = librosa.load(audio_file, sr=16000)
+        inputs = processor(audio, sampling_rate=rate, return_tensors="pt", padding=True)
 
-# Function to clean data
-def clean_data(df):
-    for col in ["Age", "Converted-MMSE"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-    return df.dropna()
+        with torch.no_grad():
+            outputs = model(**inputs)
+            hidden_states = outputs.hidden_states  # List of hidden states
 
-# Custom ClippedSVR wrapper
-from sklearn.base import BaseEstimator, RegressorMixin
+        # Extract features from high-level layers (e.g., last 3 layers)
+        high_level_states = hidden_states[-3:]  # Layers 22, 23, 24
 
-class ClippedSVR(BaseEstimator, RegressorMixin):
-    def __init__(self, svr=None, min_val=0, max_val=30):
-        if svr is None:
-            svr = SVR()  # Default SVR if none provided
-        self.svr = svr
-        self.min_val = min_val
-        self.max_val = max_val
+        # Mean pooling across the sequence dimension for fixed-size representation
+        pooled_features = [torch.mean(layer, dim=1).squeeze(0) for layer in high_level_states]
 
-    def fit(self, X, y):
-        self.svr.fit(X, y)
-        return self
+        # Concatenate pooled features from all selected layers
+        final_features = torch.cat(pooled_features, dim=0).numpy()
 
-    def predict(self, X):
-        predictions = self.svr.predict(X)
-        return np.clip(predictions, self.min_val, self.max_val)
+        return final_features
 
-    def get_params(self, deep=True):
-        params = {"min_val": self.min_val, "max_val": self.max_val}
-        if deep:
-            params.update({f"svr__{key}": value for key, value in self.svr.get_params(deep=deep).items()})
-        return params
+    except Exception as e:
+        print(f"Error processing {audio_file}: {e}")
+        return None
 
-    def set_params(self, **params):
-        svr_params = {key.split("__", 1)[1]: value for key, value in params.items() if key.startswith("svr__")}
-        wrapper_params = {key: value for key, value in params.items() if not key.startswith("svr__")}
-        self.svr.set_params(**svr_params)
-        for key, value in wrapper_params.items():
-            setattr(self, key, value)
-        return self
+# Process person folder sequentially (one folder at a time)
+def process_person_folder(person_folder):
+    person_path = os.path.join(DATASET_PATH, person_folder)
 
-# Check if features file exists
-if not os.path.exists(FEATURES_FILE):
-    logging.info("Features file not found. Starting feature extraction...")
+    if not os.path.isdir(person_path) or person_folder == ".DS_Store":
+        return []
+
+    participant_info = participant_data[participant_data["Record-ID"] == person_folder]
+    if participant_info.empty:
+        print(f"No metadata found for {person_folder}. Skipping...")
+        return []
+
+    record_id = participant_info["Record-ID"].values[0]
+    train_or_dev = participant_info["TrainOrDev"].values[0]
+    cls = participant_info["Class"].values[0]
+    gender = participant_info["Gender"].values[0]
+    age = participant_info["Age"].values[0]
+    converted_mmse = participant_info["Converted-MMSE"].values[0]
+
     all_features = []
+
+    print(f"Processing folder: {person_folder}")
+    for file in os.listdir(person_path):
+        if file.endswith(".wav"):
+            audio_path = os.path.join(person_path, file)
+
+            high_level_features = extract_high_level_features(audio_path)
+
+            if high_level_features is not None:
+                feature_data = {
+                    "Record-ID": record_id,
+                    "Audio-File": file,
+                    "TrainOrDev": train_or_dev,
+                    "Class": cls,
+                    "Gender": gender,
+                    "Age": age,
+                    "Converted-MMSE": converted_mmse,
+                }
+
+                # Add feature dimensions to the feature_data dictionary
+                for i, value in enumerate(high_level_features):
+                    feature_data[f"feature_{i}"] = value
+
+                all_features.append(feature_data)
+
+    print(f"Processed {len(all_features)} files in {person_folder}")
+    return all_features
+
+def gather_features():
+    all_features = []
+
+    print("Starting feature extraction...")
     for person_folder in os.listdir(DATASET_PATH):
-        person_path = os.path.join(DATASET_PATH, person_folder)
-        if not os.path.isdir(person_path):
-            logging.warning(f"Skipping {person_folder}, not a directory.")
-            continue
-        logging.info(f"Processing folder: {person_folder}")
-        participant_info = participant_data[participant_data["Record-ID"] == person_folder]
-        if participant_info.empty:
-            logging.warning(f"No metadata found for {person_folder}. Skipping...")
-            continue
-        record_id = participant_info["Record-ID"].values[0]
-        train_or_dev = participant_info["TrainOrDev"].values[0]
-        cls = participant_info["Class"].values[0]
-        gender = participant_info["Gender"].values[0]
-        age = participant_info["Age"].values[0]
-        converted_mmse = participant_info["Converted-MMSE"].values[0]
-        for file in os.listdir(person_path):
-            if file.endswith(".wav"):
-                audio_path = os.path.join(person_path, file)
-                logging.info(f"Processing audio file: {audio_path}")
-                try:
-                    multi_layer_features = extract_multi_layer_features(audio_path)
-                    feature_data = {
-                        "Record-ID": record_id,
-                        "TrainOrDev": train_or_dev,
-                        "Class": cls,
-                        "Gender": gender,
-                        "Age": age,
-                        "Converted-MMSE": converted_mmse,
-                    }
-                    for i, feature in enumerate(multi_layer_features):
-                        feature_data[f"feature_{i}"] = feature
-                    all_features.append(feature_data)
-                except Exception as e:
-                    logging.error(f"Error processing {audio_path}: {e}")
-    features_df = pd.DataFrame(all_features)
-    features_df.to_csv(FEATURES_FILE, index=False)
-    logging.info("Feature extraction complete. Saved to extracted_features.csv")
-else:
-    logging.info("Features file found. Loading data...")
-    features_df = pd.read_csv(FEATURES_FILE)
+        features = process_person_folder(person_folder)
+        all_features.extend(features)
 
-features_df = clean_data(features_df)
+    print(f"Feature extraction completed. Total features extracted: {len(all_features)}.")
 
-logging.info(f"Number of samples after cleaning: {len(features_df)}")
+    return all_features
 
-if len(features_df) == 0:
-    logging.error("No valid samples available after cleaning. Please check the dataset.")
-    exit()
+if __name__ == "__main__":
+    if not os.path.exists(FEATURES_FILE):
+        # Step 1: Extract features sequentially
+        all_features = gather_features()
 
-if "Converted-MMSE" not in features_df.columns:
-    logging.error("'Converted-MMSE' column not found in features file. Ensure the dataset is complete.")
-    exit()
+        if all_features:
+            print("Saving extracted features to CSV...")
+            feature_df = pd.DataFrame(all_features)
+            feature_df.to_csv(FEATURES_FILE, index=False)
+            print("Feature extraction complete. Results saved in:", FEATURES_FILE)
+        else:
+            print("No features extracted. Check dataset structure and file paths.")
+    else:
+        print(f"Features file already exists: {FEATURES_FILE}. Loading features...")
+        feature_df = pd.read_csv(FEATURES_FILE)
 
-# Separate train and dev sets based on 'TrainOrDev' column
-train_data = features_df[features_df["TrainOrDev"] == "train"]
-dev_data = features_df[features_df["TrainOrDev"] == "dev"]
+    # Step 2: Train SVR model
+    print("Preparing data for SVR model...")
+    feature_columns = [col for col in feature_df.columns if col.startswith("feature_")]
+    X_train = feature_df[feature_df["TrainOrDev"] == "train"][feature_columns].values
+    y_train = feature_df[feature_df["TrainOrDev"] == "train"]["Converted-MMSE"].values
 
-X_train = train_data.drop(columns=["Converted-MMSE", "Class", "Record-ID", "TrainOrDev"])
-y_train = train_data["Converted-MMSE"]
+    X_dev = feature_df[feature_df["TrainOrDev"] == "dev"][feature_columns].values
+    y_dev = feature_df[feature_df["TrainOrDev"] == "dev"]["Converted-MMSE"].values
 
-X_test = dev_data.drop(columns=["Converted-MMSE", "Class", "Record-ID", "TrainOrDev"])
-y_test = dev_data["Converted-MMSE"]
+    print("Training SVR model...")
+    svr = SVR(kernel='rbf', C=1.0, epsilon=0.1)
+    svr.fit(X_train, y_train)
 
-if "Gender" in X_train.columns:
-    X_train = pd.get_dummies(X_train, columns=["Gender"], drop_first=True)
-    X_test = pd.get_dummies(X_test, columns=["Gender"], drop_first=True)
+    print("Evaluating SVR model...")
+    y_pred = svr.predict(X_dev)
 
-X_test = X_test.reindex(columns=X_train.columns, fill_value=0)
+    # Clip predictions to range [0, 30]
+    y_pred = np.clip(y_pred, 0, 30)
 
-logging.info(f"Train set size: {len(X_train)}, Test set size: {len(X_test)}")
+    mse = mean_squared_error(y_dev, y_pred)
+    mae = mean_absolute_error(y_dev, y_pred)
+    print(f"Mean Squared Error on dev set: {mse}")
+    print(f"Mean Absolute Error on dev set: {mae}")
 
-# Define SVR pipeline
-svr_pipeline = Pipeline([
-    ("scaler", StandardScaler()),
-    ("svr", ClippedSVR(SVR(), min_val=0, max_val=30))
-])
-
-# Define hyperparameter grid for tuning
-param_grid = {
-    "svr__kernel": ["linear", "rbf", "poly"],
-    "svr__C": [0.1, 1, 10],
-    "svr__gamma": [0.1, 0.01, 0.001],
-    "svr__epsilon": [0.1, 0.2, 0.5],
-}
-
-# Apply GridSearchCV
-grid_search = GridSearchCV(svr_pipeline, param_grid, cv=5, scoring="neg_mean_squared_error", n_jobs=-1)
-grid_search.fit(X_train, y_train)
-
-# Best model after tuning
-best_svr_model = grid_search.best_estimator_
-
-# Evaluate the best model on the test data
-y_pred = best_svr_model.predict(X_test)
-
-# Evaluate metrics
-mse = mean_squared_error(y_test, y_pred)
-mae = mean_absolute_error(y_test, y_pred)
-rmse = np.sqrt(mse)
-r2 = r2_score(y_test, y_pred)
-
-logging.info("Evaluation Metrics (Best Model):")
-logging.info(f"Mean Squared Error (MSE): {mse:.2f}")
-logging.info(f"Mean Absolute Error (MAE): {mae:.2f}")
-logging.info(f"Root Mean Squared Error (RMSE): {rmse:.2f}")
-logging.info(f"R-squared (R^2): {r2:.2f}")
-
-# Plot learning curve
-plt.figure(figsize=(10, 6))
-plt.plot(range(1, 21), grid_search.cv_results_['mean_test_score'], marker='o', label='Validation Loss (MSE)')
-plt.xlabel("Iteration")
-plt.ylabel("Mean Squared Error")
-plt.title("Learning Curve with Hyperparameter Tuning")
-plt.legend()
-plt.grid()
-plt.savefig(os.path.join(OUTPUT_PATH, "learning_curve_tuned.png"))
-logging.info("Learning curve saved to learning_curve_tuned.png")
-
-# Save predictions
-results = pd.DataFrame({"True_MMSE": y_test, "Predicted_MMSE": y_pred})
-results.to_csv(os.path.join(OUTPUT_PATH, "svr_predictions_tuned.csv"), index=False)
-logging.info("Predictions saved to svr_predictions_tuned.csv")
+    # Save the trained model
+    model_path = os.path.join(OUTPUT_PATH, "svr_model.joblib")
+    joblib.dump(svr, model_path)
+    print(f"SVR model saved to {model_path}")
