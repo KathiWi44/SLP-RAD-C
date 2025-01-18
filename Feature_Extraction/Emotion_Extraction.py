@@ -41,27 +41,38 @@ print(f"Loaded {len(participant_data)} participant records from {CSV_FILE}.")
 
 
 def calculate_std(y_true, y_pred):
-    # Step 1: Calculate the mean of the predictions
-    mean_pred = sum(y_pred) / len(y_pred)
+    # Step 1: Calculate the mean of the prediction errors
+    n = len(y_pred)
+    mean_pred_error = sum((y_t - y_p) for y_t, y_p in zip(y_true, y_pred)) / n
 
-    # Step 2: Calculate the squared differences from the mean
-    squared_diff = [(y_p - mean_pred) ** 2 for y_p in y_pred]
+    # Step 2: Calculate the squared differences from the mean error
+    squared_diffs = [(y_t - y_p - mean_pred_error) ** 2 for y_t, y_p in zip(y_true, y_pred)]
 
-    # Step 3: Calculate the mean of squared differences
-    mean_squared_diff = sum(squared_diff) / len(squared_diff)
-
-    # Step 4: Take the square root of the mean squared differences
-    std = mean_squared_diff ** 0.5
+    # Step 3: Calculate the variance (mean of squared differences)
+    variance = sum(squared_diffs) / n
+    std = variance ** 0.5
 
     return std
 
 def calculate_mae(y_true, y_pred):
-    error_sum = sum(abs(y_t - y_p) for y_t, y_p in zip(y_true, y_pred))
-    return error_sum / len(y_true)
+    n = len(y_true)  # Number of samples
+    absolute_errors = [abs(y_t - y_p) for y_t, y_p in zip(y_true, y_pred)]
+    mae = sum(absolute_errors) / n  # Mean of absolute errors
+    return mae
 
 def calculate_mse(y_true, y_pred):
-    error_sum = sum((y_t - y_p) ** 2 for y_t, y_p in zip(y_true, y_pred))
-    return error_sum / len(y_true)
+    n = len(y_true)  # Number of samples
+    squared_errors = [(y_t - y_p) ** 2 for y_t, y_p in zip(y_true, y_pred)]
+    mse = sum(squared_errors) / n  # Mean of squared errors
+    return mse
+
+def calculate_rmse(y_true, y_pred):
+    n = len(y_true)
+    squared_errors = [(y_t - y_p) ** 2 for y_t, y_p in zip(y_true, y_pred)]
+    mse = sum(squared_errors) / n
+    rmse = mse ** 0.5  # Square root of the MSE
+    print(f"Calculated RMSE (inside function): {rmse}, Type: {type(rmse)}")
+    return rmse
 
 def plot_metrics(mse_values, mae_values, plot_path):
     plt.figure(figsize=(14,7))
@@ -210,9 +221,10 @@ if __name__ == "__main__":
                     "Predicted-MMSE": pred_value
                 })
 
-            mae = calculate_mae(y_val_original, y_pred)
-            mse = calculate_mse(y_val_original, y_pred)
-            std = calculate_std(y_val_original, y_pred)
+            mse = calculate_mse(y_val_original.ravel(), y_pred.ravel())
+            mae = calculate_mae(y_val_original.ravel(), y_pred.ravel())
+            std = calculate_std(y_val_original.ravel(), y_pred.ravel())
+            rmse = calculate_rmse(y_val_original.ravel(), y_pred.ravel())
 
             output_csv = os.path.join(OUTPUT_PATH, "true_and_predicted_mmse.csv")
 
@@ -227,15 +239,15 @@ if __name__ == "__main__":
             mse_values.append(mse)
             mae_values.append(mae)
 
-            print(f"Fold {fold} MSE: {mse:.4f}, MAE: {mae:.4f}")
+            print(f"Fold {fold} MSE: {mse:.4f}, MAE: {mae:.4f}, RMSE: {rmse:.4f}")
 
         plot_metrics(mse_values, mae_values, plot_path=PLOT_PNG)
 
         print("Training SVR model.")
         final_svr = SVR(kernel='rbf', C=1.0, epsilon=0.1)
-        final_svr.fit(X, y_pred_scaled.ravel())
+        final_svr.fit(X, y.ravel())
 
         model_path = os.path.join(OUTPUT_PATH, "svr_mmse.joblib")
         joblib.dump(final_svr, model_path)
 
-        print(f"MSE: {mse:.4f}, MAE: {mae:.4f}, STD: {std:.4f}")
+        print(f"MSE: {mse:.4f}, MAE: {mae:.4f}, RMSE: {rmse:.4f}, STD: {std:.4f}")
