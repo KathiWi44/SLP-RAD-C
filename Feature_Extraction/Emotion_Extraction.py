@@ -10,6 +10,7 @@ from sklearn.preprocessing import StandardScaler, OneHotEncoder
 import numpy as np
 import joblib
 import csv
+from collections import defaultdict
 
 MODEL_NAME = "CAiRE/SER-wav2vec2-large-xlsr-53-eng-zho-all-age"
 processor = Wav2Vec2FeatureExtractor.from_pretrained(MODEL_NAME)
@@ -19,17 +20,12 @@ MMSE_RANGE = 30
 
 results = []
 
-wav2vec_feature_scaler = StandardScaler()
-feature_scaler = StandardScaler()
-target_scaler = StandardScaler()
-one_hot_encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
-
 SCRIPT_DIR = os.path.dirname(__file__)
 DATASET_PATH = os.path.join(SCRIPT_DIR, "../PROCESS-V1/PROCESS-V1")
 OUTPUT_PATH = os.path.join(SCRIPT_DIR, "../Feature_Extraction")
-FEATURES_FILE = os.path.join(OUTPUT_PATH, "middle_level_features.csv")
+FEATURES_FILE = os.path.join(OUTPUT_PATH, "low_level_features.csv")
 CSV_FILE = os.path.join(DATASET_PATH, "dem-info.csv")
-PLOT_PNG = os.path.join(OUTPUT_PATH, "plot_middle_level_metrics.png")
+PLOT_PNG = os.path.join(OUTPUT_PATH, "plot_low_level_metrics.png")
 SCALER_FEATURES = os.path.join(OUTPUT_PATH, "feature_scaler.joblib")
 SCALER_TARGET = os.path.join(OUTPUT_PATH, "target_scaler.joblib")
 
@@ -88,19 +84,42 @@ def plot_metrics(mse_values, mae_values, plot_path):
     plt.savefig(plot_path, format='png')
     plt.close()
 
-def scale_features_and_encode(df):
-    # Scale numerical columns (Age and MMSE)
-    df["Age"] = feature_scaler.fit_transform(df[["Age"]])
-    df["Converted-MMSE"] = target_scaler.fit_transform(df[["Converted-MMSE"]])
+def scale_features_and_encode(df, scaler_dict=None, encoder=None, fit=True):
+    if scaler_dict is None:
+        scaler_dict = {
+            "wav2vec_feature_scaler": StandardScaler(),
+            "feature_scaler": StandardScaler(),
+            "target_scaler": StandardScaler()
+        }
+    if encoder is None:
+        encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
 
-    # Encode categorical columns (Gender and Class)
+    # Scale numerical columns Age and MMSE
+    if fit:
+        df["Age"] = scaler_dict["feature_scaler"].fit_transform(df[["Age"]])
+        df["Converted-MMSE"] = scaler_dict["target_scaler"].fit_transform(df[["Converted-MMSE"]])
+    else:
+        df["Age"] = scaler_dict["feature_scaler"].transform(df[["Age"]])
+        df["Converted-MMSE"] = scaler_dict["target_scaler"].transform(df[["Converted-MMSE"]])
+
+    # Encode categorical columns Gender and Clas
     categorical_data = df[["Gender", "Class"]]
-    encoded_data = one_hot_encoder.fit_transform(categorical_data)
+    if fit:
+        encoded_data = encoder.fit_transform(categorical_data)
+    else:
+        encoded_data = encoder.transform(categorical_data)
 
-    # Combine scaled features, encoded categories, and audio features
+    # Scale wav2vec features
     feature_columns = [col for col in df.columns if col.startswith("feature_")]
-    scaled_features = wav2vec_feature_scaler.fit_transform(df[feature_columns])
-    return np.hstack((scaled_features, encoded_data, df[["Age"]]))
+    if fit:
+        scaled_features = scaler_dict["wav2vec_feature_scaler"].fit_transform(df[feature_columns])
+    else:
+        scaled_features = scaler_dict["wav2vec_feature_scaler"].transform(df[feature_columns])
+
+    # Combine scaled features, encoded categories, and numerical features
+    scaled_numerical = df[["Age"]].values
+    combined_features = np.hstack((scaled_features, encoded_data, scaled_numerical))
+    return combined_features, scaler_dict, encoder
 
 def inverse_scale_target(y_scaled, scaler_path):
     target_scaler = joblib.load(scaler_path)
@@ -115,7 +134,7 @@ def extract_features(audio_file):
             outputs = model(**inputs)
             hidden_states = outputs.hidden_states
 
-        level_states = hidden_states[10:13]
+        level_states = hidden_states[1:4]
         pooled_features = [torch.mean(layer, dim=1).squeeze(0) for layer in level_states]
         final_features = torch.cat(pooled_features, dim=0).numpy()
 
@@ -173,8 +192,165 @@ def gather_features():
     print(f"Feature extraction completed. Total features extracted: {len(all_features)}.")
     return all_features
 
-if __name__ == "__main__":
-# Load features if the file exists
+def perform_k_fold_cv(X, y, feature_df, n_splits=5, random_state=42):#
+    results = defaultdict(list)
+    missing_mmse_path = os.path.join(DATASET_PATH, "dem-info-original.csv")
+    original_df = pd.read_csv(missing_mmse_path)
+
+    kf = KFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    mse_values = []
+    mae_values = []
+
+    print("Starting 5-Fold Cross-Validation...")
+    for fold, (train_index, val_index) in enumerate(kf.split(X), start=1):
+        print(f"\nFold {fold}:")
+
+        X_train, X_val = X[train_index], X[val_index]
+        y_train, y_val = y[train_index], y[val_index]
+
+        # Initialize scalers and encoder
+        scaler_dict = {
+            "wav2vec_feature_scaler": StandardScaler(),
+            "feature_scaler": StandardScaler(),
+            "target_scaler": StandardScaler()
+        }
+        encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
+
+        # Create temporary DataFrame for scaling and encoding
+        temp_train_df = feature_df.iloc[train_index].copy()
+        temp_val_df = feature_df.iloc[val_index].copy()
+
+        # Scale and encode
+        X_train_scaled, scaler_dict, encoder = scale_features_and_encode(temp_train_df, scaler_dict, encoder, fit=True)
+        X_val_scaled, _, _ = scale_features_and_encode(temp_val_df, scaler_dict, encoder, fit=False)
+
+        # Scale target
+        y_train_scaled = scaler_dict["target_scaler"].fit_transform(y_train)
+        y_val_scaled = scaler_dict["target_scaler"].transform(y_val)
+
+        # Train SVR
+        svr = SVR(kernel='rbf', C=1.0, epsilon=0.1)
+        svr.fit(X_train_scaled, y_train_scaled.ravel())
+
+        y_pred_scaled = svr.predict(X_val_scaled)
+        y_pred = scaler_dict["target_scaler"].inverse_transform(y_pred_scaled.reshape(-1, 1))
+        y_val_original = scaler_dict["target_scaler"].inverse_transform(y_val_scaled)
+
+        # Clip predictions from 0-30
+        y_pred = np.clip(y_pred, 0, MMSE_RANGE)
+
+        val_ids = feature_df.iloc[val_index]["Record-ID"].values
+        valid_rows = original_df["Record-ID"].isin(val_ids) & original_df["Converted-MMSE"].notna()
+        valid_val_ids = original_df.loc[valid_rows, "Record-ID"].values
+        valid_true = original_df.loc[valid_rows, "Converted-MMSE"].values
+
+        for record_id, true_val, pred_val in zip(val_ids, y_val_original.ravel(), y_pred.ravel()):
+            if record_id in valid_val_ids:
+                results[record_id].append({
+                    "True-MMSE": true_val,
+                    "Predicted-MMSE": pred_val
+                })
+
+        # Extract valid predictions and true values
+        valid_pred = [y for record_id, y in zip(val_ids, y_pred.ravel()) if
+                      record_id in original_df.loc[valid_rows, "Record-ID"].values]
+
+        ''''
+        # Prediction results
+        for true_val, pred_val, record_id in zip(valid_true, valid_pred, val_ids):
+            results.append({
+                "Record-ID": record_id,
+                "True-MMSE": true_val,
+                "Predicted-MMSE": pred_val
+            })'''
+
+        # Calculate metrics
+        mse = calculate_mse(valid_true, valid_pred)
+        mae = calculate_mae(valid_true, valid_pred)
+        std = calculate_std(valid_true, valid_pred)
+        rmse = calculate_rmse(valid_true, valid_pred)
+
+        mse_values.append(mse)
+        mae_values.append(mae)
+
+        print(f"Fold {fold} MSE: {mse:.4f}, MAE: {mae:.4f}, RMSE: {rmse:.4f}, std: {std:.4f}")
+
+        # Aggregate predictions at the participant level
+        participant_results = []
+        for record_id, predictions in results.items():
+            true_values = [pred["True-MMSE"] for pred in predictions]
+            predicted_values = [pred["Predicted-MMSE"] for pred in predictions]
+
+            # Compute mean of predictions and single true value
+            participant_mean_prediction = np.mean(predicted_values)
+            participant_true_value = np.mean(true_values)  # Assumes true values are consistent per participant
+
+            participant_results.append({
+                "Record-ID": record_id,
+                "True-MMSE": participant_true_value,
+                "Mean-Predicted-MMSE": participant_mean_prediction
+            })
+
+    # Save flattened results to CSV
+    output_csv = os.path.join(OUTPUT_PATH, "true_and_predicted_mmse.csv")
+    with open(output_csv, mode="w", newline="") as csvfile:
+        fieldnames = ["Record-ID", "True-MMSE", "Mean-Predicted-MMSE"]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+        writer.writeheader()
+        writer.writerows(participant_results)
+
+    all_true = [entry["True-MMSE"] for entry in participant_results]
+    all_pred = [entry["Mean-Predicted-MMSE"] for entry in participant_results]
+
+    # Plot metrics
+    plot_metrics(mse_values, mae_values, plot_path=PLOT_PNG)
+
+    # Return average metrics
+    avg_mse = calculate_mse(all_true, all_pred)
+    avg_mae = calculate_mae(all_true, all_pred)
+    avg_rmse = calculate_rmse(all_true, all_pred)
+    avg_std = calculate_std(all_true, all_pred)
+    print(f"\n5-fold CV:\nAverage MSE: {avg_mse:.4f}, Average MAE: {avg_mae:.4f} Average RMSE: {avg_rmse:.4f}, Average STD: {avg_std:.4f}")
+    return avg_mse, avg_mae
+
+def save_predictions(results, output_csv):
+    print(f"Saving predictions to {output_csv}...")
+    with open(output_csv, mode='w', newline='') as file:
+        writer = csv.DictWriter(file, fieldnames=["Record-ID", "True-MMSE", "Predicted-MMSE"])
+        writer.writeheader()
+        writer.writerows(results)
+    print(f"Predictions saved to {output_csv}")
+
+def train_svr_model(feature_df, feature_columns, numerical_columns, categorical_columns, scaler_dict, encoder):
+    print("\nTraining final SVR model on the entire dataset...")
+
+    # Scale and encode dataset
+    X_scaled, _, _ = scale_features_and_encode(feature_df.copy(), scaler_dict, encoder, fit=True)
+    y = feature_df["Converted-MMSE"].values.reshape(-1, 1)
+    y_scaled = scaler_dict["target_scaler"].fit_transform(y)
+
+    # Train SVR
+    final_svr = SVR(kernel='rbf', C=1.0, epsilon=0.1)
+    final_svr.fit(X_scaled, y_scaled.ravel())
+
+    # Save the final model
+    model_path = os.path.join(OUTPUT_PATH, "svr_mmse.joblib")
+    joblib.dump(final_svr, model_path)
+    print(f"Final SVR model saved to {model_path}")
+
+    # Optionally, save scalers and encoders
+    scaler_path = os.path.join(OUTPUT_PATH, "scaler_dict.joblib")
+    encoder_path = os.path.join(OUTPUT_PATH, "one_hot_encoder.joblib")
+    joblib.dump(scaler_dict, scaler_path)
+    joblib.dump(encoder, encoder_path)
+    print(f"Scalers saved to {scaler_path}")
+    print(f"Encoder saved to {encoder_path}")
+
+    return final_svr
+
+def main():
+    # Step 1: Feature Extraction
     if not os.path.exists(FEATURES_FILE):
         all_features = gather_features()
         if all_features:
@@ -183,71 +359,33 @@ if __name__ == "__main__":
             print("Feature extraction complete. Results saved in:", FEATURES_FILE)
         else:
             print("No features extracted!")
+            return
     else:
         print(f"Features file already exists: {FEATURES_FILE}. Loading features:")
         feature_df = pd.read_csv(FEATURES_FILE)
 
-        print("Data for 5-Fold Cross-Validation:")
-        X = scale_features_and_encode(feature_df)
-        y = feature_df["Converted-MMSE"].values.reshape(-1, 1)
+    # Define feature columns
+    feature_columns = [col for col in feature_df.columns if col.startswith("feature_")]
+    numerical_columns = ["Age"]
+    categorical_columns = ["Gender", "Class"]
 
-        kf = KFold(n_splits=5, shuffle=True, random_state=42)
-        mse_values = []
-        mae_values = []
-        all_preds = []
-        all_true = []
+    # Prepare data for Cross-Validation
+    X = feature_df[feature_columns + numerical_columns + categorical_columns].values
+    y = feature_df["Converted-MMSE"].values.reshape(-1, 1)
 
-        print("5-Fold Cross-Validation:")
-        for fold, (train_index, val_index) in enumerate(kf.split(X), start=1):
-            print(f"\nFold {fold}:")
-            X_train, X_val = X[train_index], X[val_index]
-            y_train, y_val = y[train_index], y[val_index]
+    # Perform 5-Fold Cross-Validation
+    avg_mse, avg_mae = perform_k_fold_cv(X, y, feature_df, n_splits=5, random_state=42)
 
-            val_ids = feature_df.iloc[val_index]["Record-ID"].values
+    # Train SVR Model on Entire Dataset
+    # Initialize scalers and encoder for final training
+    scaler_dict = {
+        "wav2vec_feature_scaler": StandardScaler(),
+        "feature_scaler": StandardScaler(),
+        "target_scaler": StandardScaler()
+    }
+    encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
 
-            svr = SVR(kernel='rbf', C=1.0, epsilon=0.1)
-            svr.fit(X_train, y_train.ravel())
+    final_model = train_svr_model(feature_df, feature_columns, numerical_columns, categorical_columns, scaler_dict, encoder)
 
-            y_pred_scaled = svr.predict(X_val)
-            y_pred = target_scaler.inverse_transform(y_pred_scaled.reshape(-1, 1))
-            y_val_original = target_scaler.inverse_transform(y_val)
-
-            y_pred = np.clip(y_pred, 0, MMSE_RANGE)
-
-            for true_value, pred_value, record_id in zip(y_val, y_pred, val_ids):
-                results.append({
-                    "Record-ID": record_id,
-                    "True-MMSE": true_value,
-                    "Predicted-MMSE": pred_value
-                })
-
-            mse = calculate_mse(y_val_original.ravel(), y_pred.ravel())
-            mae = calculate_mae(y_val_original.ravel(), y_pred.ravel())
-            std = calculate_std(y_val_original.ravel(), y_pred.ravel())
-            rmse = calculate_rmse(y_val_original.ravel(), y_pred.ravel())
-
-            output_csv = os.path.join(OUTPUT_PATH, "true_and_predicted_mmse.csv")
-
-            # Write to CSV
-            with open(output_csv, mode='w', newline='') as file:
-                writer = csv.DictWriter(file, fieldnames=["Record-ID", "True-MMSE", "Predicted-MMSE"])
-                writer.writeheader()
-                writer.writerows(results)
-
-            print(f"True and Predicted values saved to {output_csv}")
-
-            mse_values.append(mse)
-            mae_values.append(mae)
-
-            print(f"Fold {fold} MSE: {mse:.4f}, MAE: {mae:.4f}, RMSE: {rmse:.4f}")
-
-        plot_metrics(mse_values, mae_values, plot_path=PLOT_PNG)
-
-        print("Training SVR model.")
-        final_svr = SVR(kernel='rbf', C=1.0, epsilon=0.1)
-        final_svr.fit(X, y.ravel())
-
-        model_path = os.path.join(OUTPUT_PATH, "svr_mmse.joblib")
-        joblib.dump(final_svr, model_path)
-
-        print(f"MSE: {mse:.4f}, MAE: {mae:.4f}, RMSE: {rmse:.4f}, STD: {std:.4f}")
+if __name__ == "__main__":
+    main()
