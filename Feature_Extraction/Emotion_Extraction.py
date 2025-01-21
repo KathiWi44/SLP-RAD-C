@@ -23,9 +23,9 @@ results = []
 SCRIPT_DIR = os.path.dirname(__file__)
 DATASET_PATH = os.path.join(SCRIPT_DIR, "../PROCESS-V1/PROCESS-V1")
 OUTPUT_PATH = os.path.join(SCRIPT_DIR, "../Feature_Extraction")
-FEATURES_FILE = os.path.join(OUTPUT_PATH, "low_level_features.csv")
+FEATURES_FILE = os.path.join(OUTPUT_PATH, "high_level_features.csv")
 CSV_FILE = os.path.join(DATASET_PATH, "dem-info.csv")
-PLOT_PNG = os.path.join(OUTPUT_PATH, "plot_low_level_metrics.png")
+PLOT_PNG = os.path.join(OUTPUT_PATH, "plot_high_level_metrics.png")
 SCALER_FEATURES = os.path.join(OUTPUT_PATH, "feature_scaler.joblib")
 SCALER_TARGET = os.path.join(OUTPUT_PATH, "target_scaler.joblib")
 
@@ -62,19 +62,11 @@ def calculate_mse(y_true, y_pred):
     mse = sum(squared_errors) / n  # Mean of squared errors
     return mse
 
-def calculate_rmse(y_true, y_pred):
-    n = len(y_true)
-    squared_errors = [(y_t - y_p) ** 2 for y_t, y_p in zip(y_true, y_pred)]
-    mse = sum(squared_errors) / n
-    rmse = mse ** 0.5  # Square root of the MSE
-    print(f"Calculated RMSE (inside function): {rmse}, Type: {type(rmse)}")
-    return rmse
-
 def plot_metrics(mse_values, mae_values, plot_path):
     plt.figure(figsize=(14,7))
     plt.plot(range(1, len(mse_values) + 1), mse_values, label="MSE", marker='o')
     plt.plot(range(1, len(mae_values) + 1), mae_values, label="MAE", marker='x')
-    plt.title("MSE and MAE")
+    plt.title("MSE and MAE of high level feature extraction")
     plt.xlabel("Fold")
     plt.legend()
     plt.grid(True)
@@ -103,7 +95,7 @@ def scale_features_and_encode(df, scaler_dict=None, encoder=None, fit=True):
         df["Converted-MMSE"] = scaler_dict["target_scaler"].transform(df[["Converted-MMSE"]])
 
     # Encode categorical columns Gender and Clas
-    categorical_data = df[["Gender", "Class"]]
+    categorical_data = df[["Gender"]]
     if fit:
         encoded_data = encoder.fit_transform(categorical_data)
     else:
@@ -217,8 +209,8 @@ def perform_k_fold_cv(X, y, feature_df, n_splits=5, random_state=42):#
         encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
 
         # Create temporary DataFrame for scaling and encoding
-        temp_train_df = feature_df.iloc[train_index].copy()
-        temp_val_df = feature_df.iloc[val_index].copy()
+        temp_train_df = feature_df.iloc[train_index].drop(columns=["Class"]).copy()  # Drop "Class"
+        temp_val_df = feature_df.iloc[val_index].drop(columns=["Class"]).copy()
 
         # Scale and encode
         X_train_scaled, scaler_dict, encoder = scale_features_and_encode(temp_train_df, scaler_dict, encoder, fit=True)
@@ -255,25 +247,15 @@ def perform_k_fold_cv(X, y, feature_df, n_splits=5, random_state=42):#
         valid_pred = [y for record_id, y in zip(val_ids, y_pred.ravel()) if
                       record_id in original_df.loc[valid_rows, "Record-ID"].values]
 
-        ''''
-        # Prediction results
-        for true_val, pred_val, record_id in zip(valid_true, valid_pred, val_ids):
-            results.append({
-                "Record-ID": record_id,
-                "True-MMSE": true_val,
-                "Predicted-MMSE": pred_val
-            })'''
-
         # Calculate metrics
         mse = calculate_mse(valid_true, valid_pred)
         mae = calculate_mae(valid_true, valid_pred)
         std = calculate_std(valid_true, valid_pred)
-        rmse = calculate_rmse(valid_true, valid_pred)
 
         mse_values.append(mse)
         mae_values.append(mae)
 
-        print(f"Fold {fold} MSE: {mse:.4f}, MAE: {mae:.4f}, RMSE: {rmse:.4f}, std: {std:.4f}")
+        print(f"Fold {fold} MSE: {mse:.4f}, MAE: {mae:.4f}, std: {std:.4f}")
 
         # Aggregate predictions at the participant level
         participant_results = []
@@ -309,9 +291,8 @@ def perform_k_fold_cv(X, y, feature_df, n_splits=5, random_state=42):#
     # Return average metrics
     avg_mse = calculate_mse(all_true, all_pred)
     avg_mae = calculate_mae(all_true, all_pred)
-    avg_rmse = calculate_rmse(all_true, all_pred)
     avg_std = calculate_std(all_true, all_pred)
-    print(f"\n5-fold CV:\nAverage MSE: {avg_mse:.4f}, Average MAE: {avg_mae:.4f} Average RMSE: {avg_rmse:.4f}, Average STD: {avg_std:.4f}")
+    print(f"\n5-fold CV:\nAverage MSE: {avg_mse:.4f}, Average MAE: {avg_mae:.4f}, Average STD: {avg_std:.4f}")
     return avg_mse, avg_mae
 
 def save_predictions(results, output_csv):
@@ -367,7 +348,7 @@ def main():
     # Define feature columns
     feature_columns = [col for col in feature_df.columns if col.startswith("feature_")]
     numerical_columns = ["Age"]
-    categorical_columns = ["Gender", "Class"]
+    categorical_columns = ["Gender"]
 
     # Prepare data for Cross-Validation
     X = feature_df[feature_columns + numerical_columns + categorical_columns].values
@@ -385,7 +366,7 @@ def main():
     }
     encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
 
-    final_model = train_svr_model(feature_df, feature_columns, numerical_columns, categorical_columns, scaler_dict, encoder)
+    final_model = train_svr_model(feature_df.drop(columns=["Class"]), feature_columns, numerical_columns, categorical_columns, scaler_dict, encoder)
 
 if __name__ == "__main__":
     main()
