@@ -126,7 +126,7 @@ def extract_features(audio_file):
             outputs = model(**inputs)
             hidden_states = outputs.hidden_states
 
-        level_states = hidden_states[1:4]
+        level_states = hidden_states[1:4] #[10:13] for middle layers and [-3:] for high layers
         pooled_features = [torch.mean(layer, dim=1).squeeze(0) for layer in level_states]
         final_features = torch.cat(pooled_features, dim=0).numpy()
 
